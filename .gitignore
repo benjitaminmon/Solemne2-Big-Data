@@ -1,0 +1,14 @@
+# OJO: data/eventos.jsonl y data/eventos_demo.jsonl SON entregables, no ignorarlos.
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+spark-warehouse/
+metastore_db/
+derby.log
+.DS_Store
+*.mp4
+*.mov
+# Archivo provisorio, no se entrega
+data/eventos_prueba.jsonl

@@ -1,0 +1,5 @@
+# TAREA — Benjamín Lagos: fijar las versiones realmente usadas (pip freeze) y borrar esta línea
+kafka-python
+pyspark
+pandas
+matplotlib
