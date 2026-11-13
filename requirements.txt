@@ -1,5 +1,4 @@
-# TAREA — Benjamín Lagos: fijar las versiones realmente usadas (pip freeze) y borrar esta línea
-kafka-python
-pyspark
-pandas
+pyspark>=3.5.0
+pandas<3
 matplotlib
+kafka-python>=2.0.3
