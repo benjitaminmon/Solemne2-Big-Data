@@ -1,52 +1,5 @@
-# =============================================================================
-# TAREA — Responsable: Felipe González            (BORRAR ESTE BLOQUE AL TERMINAR)
-# -----------------------------------------------------------------------------
-# Productor Python que genera eventos y los publica en el tópico de Kafka.
-#
-# Debe:
-#   [ ] Generar y publicar al menos 5.000 eventos en formato JSON.
-#   [ ] Respetar exactamente los campos definidos en docs/contrato_evento.md
-#       (id del evento, marca temporal, variable categórica, variable numérica
-#       y un atributo adicional).
-#   [ ] Incluir el PATRÓN intencional definido en el contrato.
-#   [ ] Incluir la ANOMALÍA controlada (nulos o fuera de rango) y documentar
-#       cómo se introdujo (ej: "3% de los eventos con monto = None").
-#   [ ] Recibir la cantidad de eventos por parámetro:
-#           python src/productor.py --cantidad 5000
-#           python src/productor.py --cantidad 150      (para el video)
-#   [ ] Opción para escribir directo a un archivo SIN Kafka, para que Adrián y
-#       Benjamín D. avancen con Spark mientras Kafka no está listo:
-#           python src/productor.py --cantidad 500 --solo-archivo data/eventos_prueba.jsonl
-#   [ ] Informar al final: cantidad de eventos enviados y errores detectados.
-#
-# Conexión (debe coincidir con consumidor.py y kafka/crear_topico.sh):
-#   BOOTSTRAP_SERVERS = "localhost:9092"   -> dirección del servidor Kafka
-#   TOPIC             = "<nombre-del-topico>"
-#
-# PRIORIDAD: es lo primero que necesita el equipo. Entregar el JSONL de prueba
-# lo antes posible.
-# =============================================================================
-
-"""
-1. Genera eventos sintéticos basados en los registros reales de la estación Las Condes.
-2. Aplica el PATRÓN INTENCIONAL definido en el contrato:
-   - Base de CO: ~0.45 ppm
-   - Factores horarios: hora punta mañana (7-9 h: x1.3), hora punta noche (19-22 h: x1.4),
-     madrugada (3-5 h: x0.8).
-   - Factores meteorológicos: frío < 10 °C (x1.5), humedad alta > 70% (x1.3),
-     viento débil < 1.0 m/s (x1.2).
-3. Introduce la ANOMALÍA CONTROLADA:
-   - Asigna co_ppm = None (~3% de probabilidad aleatoria), simulando fallas del sensor
-     (en JSON queda como null).
-4. Permite dos modos de salida:
-   - Kafka (por defecto): publica en el tópico 'estacion-lascondes' en localhost:9092.
-   - Solo archivo (--solo-archivo): escribe directo a JSON Lines sin requerir Kafka,
-     permitiendo al equipo de Spark avanzar inmediatamente.
-"""
-
 import argparse
 import json
-import math
 import os
 import random
 import sys
@@ -70,7 +23,7 @@ PROB_ANOMALIA = 0.03  # 3% de los eventos con co_ppm = None (anomalía controlad
 DIRECCIONES_VIENTO = ["N", "NE", "E", "SE", "S", "SO", "O", "NO"]
 PESOS_DIRECCION = [1.7, 19.5, 22.6, 3.0, 6.4, 29.9, 15.0, 1.9]
 
-# Temperatura base promedio mensual (°C) en Santiago (verano cálido, invierno frío)
+# Temperatura base promedio mensual (°C) en Santiago
 TEMP_BASE_MES = {
     1: 22.0,   # Enero (verano)
     2: 21.5,   # Febrero
@@ -92,57 +45,40 @@ TEMP_BASE_MES = {
 # =============================================================================
 
 def generar_evento(id_num: int) -> dict:
-    """
-    Genera un evento individual de lectura meteorológica y calidad del aire.
+    id_evento = f"EV-{id_num:06d}" # "06" hace cumplir que el ID tenga 6 dígitos
 
-    Args:
-        id_num: Número correlativo para el identificador único del evento.
-
-    Returns:
-        dict: Diccionario con los campos del evento respetando tipos y rangos.
-    """
-    # 1. Identificador único correlativo
-    # "06" hace cumplir que el ID tenga 6 dígitos
-    id_evento = f"EV-{id_num:06d}"
-
-    # 2. Timestamp aleatorio en 2025 (cubre todas las estaciones del año y horas del día)
+    # Timestamp aleatorio
     dia_del_anio = random.randint(0, 364)
     hora = random.randint(0, 23)
+
+    # datetime(Año, Mes, Día, Hora, Minuto, Segundo)
     dt = datetime(2025, 1, 1, 0, 0, 0) + timedelta(days=dia_del_anio, hours=hora)
     timestamp_str = dt.strftime("%Y-%m-%dT%H:%M:%S")
     mes = dt.month
 
-    # 3. Dirección del viento según frecuencias observadas
     direccion_viento = random.choices(DIRECCIONES_VIENTO, weights=PESOS_DIRECCION, k=1)[0]
 
-    # 4. Temperatura (°C): base estacional mensual + ciclo diario (mínima ~6 h, máxima ~15 h, ±6 °C) + ruido
+    # Temperatura (°C): base estacional mensual + ciclo diario (mínima ~6 h, máxima ~15 h, ±6 °C) + ruido
     if 6 <= hora <= 15:
-        # Calentamiento diurno (6:00 a 15:00)
-        progreso = (hora - 6) / 9.0
-        ciclo_diario = -6.0 + 12.0 * math.sin(progreso * math.pi / 2.0)
+        ciclo_diario = -6.0 + 12.0 * ((hora - 6) / 9.0)   # Calentamiento diurno (6:00 a 15:00)
     else:
-        # Enfriamiento nocturno (15:00 a 6:00 del día siguiente)
-        horas_desde_max = (hora - 15) if hora > 15 else (hora + 9)
-        progreso = horas_desde_max / 15.0
-        ciclo_diario = 6.0 - 12.0 * math.sin(progreso * math.pi / 2.0)
+        horas_noche = (hora - 15) % 24                    # Horas transcurridas desde las 15:00
+        ciclo_diario = 6.0 - 12.0 * (horas_noche / 15.0)  # Enfriamiento nocturno (15:00 a 6:00)
 
-    ruido_temp = random.gauss(0, 1.2)
-    temperatura_c = round(TEMP_BASE_MES[mes] + ciclo_diario + ruido_temp, 1)
-    temperatura_c = max(0.0, min(35.0, temperatura_c))
+    temperatura_c = round(max(0.0, min(35.0, TEMP_BASE_MES[mes] + ciclo_diario + random.uniform(-1.5, 1.5))), 1)
 
-    # 5. Humedad (%): relación inversa con temperatura (más frío -> más húmedo) + ruido, acotada a [10, 100]
-    humedad_base = 92.0 - (temperatura_c / 35.0) * 65.0
-    ruido_hum = random.gauss(0, 5.0)
-    humedad_pct = round(humedad_base + ruido_hum, 1)
-    humedad_pct = max(10.0, min(100.0, humedad_pct))
+    # Humedad (%): relación inversa con temperatura (más frío -> más húmedo) + ruido, acotada a [10, 100]
+    # A 0 °C la base es ~90%; por cada 1 °C que sube la temperatura, la humedad baja ~2%
+    humedad_calc = 90.0 - (temperatura_c * 2.0) + random.uniform(-5.0, 5.0)
+    humedad_pct = round(max(10.0, min(100.0, humedad_calc)), 1)
 
-    # 6. Velocidad del viento (m/s): mayor en la tarde (~2.0 m/s), menor de noche (~0.8 m/s) + ruido, >= 0
-    viento_base = 1.5 + 0.7 * math.sin((hora - 10.0) * math.pi / 12.0)
-    ruido_viento = random.gauss(0, 0.35)
-    velocidad_viento_ms = round(viento_base + ruido_viento, 1)
-    velocidad_viento_ms = max(0.0, min(6.0, velocidad_viento_ms))
+    # Velocidad del viento (m/s): mayor en la tarde (~2.0 m/s), menor de noche (~0.8 m/s)
+    if 13 <= hora <= 19:
+        velocidad_viento_ms = round(random.uniform(1.5, 2.5), 1)
+    else:
+        velocidad_viento_ms = round(random.uniform(0.5, 1.2), 1)
 
-    # 7. Concentración de CO (ppm) con PATRÓN INTENCIONAL
+    # Concentración de CO (ppm) con PATRÓN INTENCIONAL
     co_base = 0.45
     factor = 1.0
 
@@ -157,17 +93,18 @@ def generar_evento(id_num: int) -> dict:
     # Factores meteorológicos (dispersión atmosférica)
     if temperatura_c < 10.0:
         factor *= 1.5  # Frío / inversión térmica
+
     if humedad_pct > 70.0:
         factor *= 1.3  # Humedad alta / estabilidad
+        
     if velocidad_viento_ms < 1.0:
         factor *= 1.2  # Viento débil / menor dispersión
 
     # Ruido ambiental controlado
-    ruido_co = random.uniform(0.92, 1.08)
-    co_calculado = round(co_base * factor * ruido_co, 2)
-    co_ppm = max(0.05, min(3.0, co_calculado))
+    co_calc = round(co_base * factor * random.uniform(0.92, 1.08), 2)
+    co_ppm = max(0.05, min(3.0, co_calc))
 
-    # 8. ANOMALÍA CONTROLADA: ~3% de lecturas nulas simulando sensor desconectado/averiado
+    # Anomalía controlada: ~3% de lecturas nulas simulando sensor desconectado/averiado
     if random.random() < PROB_ANOMALIA:
         co_ppm = None
 
