@@ -120,22 +120,10 @@ def generar_evento(id_num: int) -> dict:
     }
 
 
-# =============================================================================
-# MODOS DE ENVÍO
-# =============================================================================
-
+# =====================
+# Generar un archivo
+# =====================
 def enviar_a_archivo(eventos: list, ruta_archivo: str) -> tuple[int, int]:
-    """
-    Escribe los eventos generados directamente en un archivo en formato JSON Lines.
-    Permite generar datos sin requerir que Kafka esté corriendo.
-
-    Args:
-        eventos: Lista de eventos a escribir.
-        ruta_archivo: Ruta de destino (ej: data/eventos_prueba.jsonl).
-
-    Returns:
-        tuple[int, int]: (eventos_escritos, errores_detectados)
-    """
     directorio = os.path.dirname(ruta_archivo)
     if directorio:
         os.makedirs(directorio, exist_ok=True)
@@ -155,20 +143,10 @@ def enviar_a_archivo(eventos: list, ruta_archivo: str) -> tuple[int, int]:
 
     return escritos, errores
 
-
+# =====================
+# Enviar a Kafka
+# =====================
 def enviar_a_kafka(eventos: list, bootstrap_servers: str, topico: str, delay: float = 0.0) -> tuple[int, int]:
-    """
-    Publica los eventos generados en el tópico correspondiente de Kafka.
-
-    Args:
-        eventos: Lista de eventos a publicar.
-        bootstrap_servers: Dirección del broker de Kafka (ej: localhost:9092).
-        topico: Nombre del tópico de destino (ej: estacion-lascondes).
-        delay: Pausa opcional en segundos entre envíos (útil para la demo del video).
-
-    Returns:
-        tuple[int, int]: (eventos_enviados, errores_detectados)
-    """
     try:
         from kafka import KafkaProducer
     except ImportError:
@@ -293,6 +271,7 @@ def main():
     print("=" * 70)
     print("  PRODUCTOR DE EVENTOS — ESTACIÓN LAS CONDES (SOLEMNE 2 BIG DATA)")
     print("=" * 70)
+
     print(f"Cantidad solicitada : {args.cantidad:,} eventos")
     if args.solo_archivo:
         print(f"Modo de ejecución   : SOLO ARCHIVO (sin Kafka)")
