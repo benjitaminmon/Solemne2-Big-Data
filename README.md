@@ -38,6 +38,12 @@ Pendiente: completar versiones de Python, Java y Docker usadas y probar los coma
    ```powershell
    python src\productor.py --cantidad 5000
    ```
+   Si solo necesitas generar un archivo local, sin Kafka, usa en su lugar:
+   ```powershell
+   python src\productor.py --cantidad 5000 --solo-archivo data\eventos.jsonl
+   ```
+   Este modo escribe directamente el JSONL en `data\eventos.jsonl`; no requiere
+   levantar Kafka ni crear el tópico. Luego puedes continuar con el paso 6.
 5. Exportar los mensajes del tópico a JSON Lines:
    ```powershell
    cmd /c "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic estacion-lascondes --from-beginning --max-messages 5000 > data\eventos.jsonl"
@@ -57,7 +63,9 @@ cmd /c "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-s
 
 `src\consumidor.py` y `kafka\crear_topico.sh` aún no implementan esos pasos; los comandos anteriores usan las herramientas incluidas en la imagen de Kafka. El exportador lee desde el inicio del tópico, por lo que, si se ejecutó el productor varias veces en el mismo tópico, puede ser necesario crear un tópico nuevo para exportar solo una ejecución.
 
-El Compose actual no usa un volumen persistente: los mensajes permanecen en el contenedor Kafka y se pierden al eliminarlo. Exporta los datos antes de ejecutar `docker compose -f .\kafka\docker_compose.yml down`.
+Al publicar, Kafka guarda los mensajes en el registro del tópico dentro del contenedor; eso no crea automáticamente un archivo JSONL en la carpeta `data`. El comando del paso 5 lee esos mensajes y redirige su salida a `data\eventos.jsonl`.
+
+El Compose actual no monta un volumen persistente. Los mensajes permanecen en el contenedor mientras este exista, sujetos a la política de retención de Kafka, pero se pierden al eliminarlo. Exporta los datos antes de ejecutar `docker compose -f .\kafka\docker_compose.yml down`.
 
 ## Ubicación de los datos
 - Archivo completo (5.000+ eventos): `data/eventos.jsonl`
