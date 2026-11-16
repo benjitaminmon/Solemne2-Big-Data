@@ -1,14 +1,10 @@
 # =============================================================================
-# TAREA — Responsable: Iván Herrera                (BORRAR ESTE BLOQUE AL TERMINAR)
-# -----------------------------------------------------------------------------
-# Archivo para levantar Kafka con un solo comando:
-#       docker compose -f kafka/docker_compose.yml up -d
-#
-#   [ ] Configurar un servicio Kafka accesible en localhost:9092.
-#   [ ] Nombrar el contenedor "kafka" (lo usa crear_topico.sh).
-#   [ ] Probarlo en al menos dos PCs del equipo, incluida la de Benjamín L.
-#       (donde se grabará el video).
-#   [ ] Dejar en el README los comandos para levantarlo y detenerlo.
+# Kafka 3.9.1 en modo KRaft (un solo nodo: broker + controller, sin ZooKeeper).
+#   Levantar : docker compose -f kafka/docker_compose.yml up -d
+#   Estado   : docker ps            (debe aparecer el contenedor "kafka")
+#   Detener  : docker compose -f kafka/docker_compose.yml down
+#              (borra el contenedor y sus mensajes: exportar los datos antes)
+# Broker accesible desde el PC en localhost:9092.
 # =============================================================================
 
 services:

@@ -1,19 +1,48 @@
 #!/bin/bash
 # =============================================================================
-# TAREA — Responsable: Iván Herrera                (BORRAR ESTE BLOQUE AL TERMINAR)
-# -----------------------------------------------------------------------------
-# Crea el tópico del proyecto en Kafka y verifica que exista.
-# Kafka arranca vacío: este script se ejecuta después de docker compose up.
+# Crea los tópicos del proyecto en Kafka y los lista.
+# Requisito: Kafka levantado con  docker compose -f kafka/docker_compose.yml up -d
 #
-#   [ ] Definir el nombre del tópico (debe coincidir con productor.py y
-#       consumidor.py).
-#   [ ] Crear el tópico con kafka-topics --create.
-#   [ ] Listar los tópicos al final (este comando se muestra en el video).
-#   [ ] Si alguien usa Windows sin Git Bash, crear crear_topico.bat equivalente
-#       o dejar el comando en el README.
+# Uso:
+#   bash kafka/crear_topico.sh            -> crea los tópicos si no existen y los lista
+#   bash kafka/crear_topico.sh --reset    -> BORRA y recrea los tópicos (deja offsets en 0)
 #
-# Ejemplo:
-#   docker exec kafka kafka-topics --create --topic <nombre-del-topico> \
-#       --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
-#   docker exec kafka kafka-topics --list --bootstrap-server localhost:9092
+# Tópicos:
+#   estacion-lascondes       -> conjunto completo (5.000+ eventos)
+#   estacion-lascondes-demo  -> muestra para el video (100–200 eventos)
 # =============================================================================
+
+set -e
+
+CONTENEDOR="kafka"
+BROKER="localhost:9092"
+TOPICOS=("estacion-lascondes" "estacion-lascondes-demo")
+KT="/opt/kafka/bin/kafka-topics.sh"   # ruta del script en la imagen apache/kafka
+
+if ! docker ps --format '{{.Names}}' | grep -qx "$CONTENEDOR"; then
+  echo "[ERROR] El contenedor '$CONTENEDOR' no está corriendo."
+  echo "        Ejecuta: docker compose -f kafka/docker_compose.yml up -d"
+  exit 1
+fi
+
+if [ "$1" == "--reset" ]; then
+  for t in "${TOPICOS[@]}"; do
+    echo "[*] Eliminando tópico $t (si existe)..."
+    docker exec "$CONTENEDOR" "$KT" --delete --if-exists --topic "$t" --bootstrap-server "$BROKER"
+  done
+  sleep 3   # Kafka borra los tópicos de forma asíncrona
+fi
+
+for t in "${TOPICOS[@]}"; do
+  echo "[*] Creando tópico $t..."
+  docker exec "$CONTENEDOR" "$KT" --create --if-not-exists --topic "$t" \
+    --bootstrap-server "$BROKER" --partitions 1 --replication-factor 1
+done
+
+echo
+echo "=== Tópicos disponibles en $BROKER ==="
+docker exec "$CONTENEDOR" "$KT" --list --bootstrap-server "$BROKER"
+
+echo
+echo "=== Detalle del tópico principal ==="
+docker exec "$CONTENEDOR" "$KT" --describe --topic "${TOPICOS[0]}" --bootstrap-server "$BROKER"
