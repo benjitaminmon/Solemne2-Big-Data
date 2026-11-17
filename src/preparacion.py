@@ -1,11 +1,44 @@
 import argparse
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, to_timestamp, when
+import os
+import re
+
+
+def configurar_java():
+    """Spark 4.x requiere Java 17 o 21. En Windows, si JAVA_HOME no apunta a una de esas
+    versiones, busca un JDK 17/21 instalado en las rutas habituales y lo usa para esta ejecución."""
+    if os.name != "nt":
+        return
+    if re.search(r"(jdk|zulu)[-_]?(17|21)", os.environ.get("JAVA_HOME", ""), re.IGNORECASE):
+        return
+    candidatos = []
+    for base in [r"C:\Program Files\Eclipse Adoptium", r"C:\Program Files\Java",
+                 r"C:\Program Files\Microsoft", r"C:\Program Files\Zulu"]:
+        if os.path.isdir(base):
+            for carpeta in sorted(os.listdir(base), reverse=True):
+                if re.match(r"(jdk|zulu)[-_]?(17|21)", carpeta, re.IGNORECASE):
+                    candidatos.append(os.path.join(base, carpeta))
+    if candidatos:
+        os.environ["JAVA_HOME"] = candidatos[0]
+        os.environ["PATH"] = os.path.join(candidatos[0], "bin") + os.pathsep + os.environ.get("PATH", "")
+        print(f"[*] Usando Java: {candidatos[0]}")
+    else:
+        print("[ADVERTENCIA] No se encontró Java 17 o 21. Spark puede fallar con versiones más nuevas.")
+
+
+# Se ejecuta al importar el módulo, antes de crear la sesión de Spark
+# (analisis.py importa este archivo antes de iniciar Spark)
+configurar_java()
 
 def preparar(ruta_archivo):
     print("\n--- 1. Iniciando sesión de PySpark ---")
+    # driver.host/bindAddress = localhost: evita fallos en PCs cuyo nombre tiene
+    # caracteres no válidos para Spark (tildes, ñ, espacios)
     spark = SparkSession.builder \
         .appName("Solemne2_Preparacion_Adrian") \
+        .config("spark.driver.host", "localhost") \
+        .config("spark.driver.bindAddress", "127.0.0.1") \
         .getOrCreate()
     
     #Reduce verbosidad de logs para no ensuciar la terminal en la demo
@@ -46,14 +79,14 @@ def preparar(ruta_archivo):
     print("\n--- 6. Creación de variables categóricas (Requisito para el análisis) ---")
     df_final = df_limpio.withColumn(
         "rango_temp",
-        when(col("temperatura_c") < 10, "Frío")
-        .when((col("temperatura_c") >= 10) & (col("temperatura_c") <= 20), "Templado")
-        .otherwise("Cálido")
+        when(col("temperatura_c") < 10, "Frío (< 10 °C)")
+        .when((col("temperatura_c") >= 10) & (col("temperatura_c") <= 20), "Templado (10–20 °C)")
+        .otherwise("Cálido (> 20 °C)")
     ).withColumn(
         "rango_humedad",
-        when(col("humedad_pct") < 40, "Seca")
-        .when((col("humedad_pct") >= 40) & (col("humedad_pct") <= 70), "Moderada")
-        .otherwise("Húmeda")
+        when(col("humedad_pct") < 40, "Seca (< 40%)")
+        .when((col("humedad_pct") >= 40) & (col("humedad_pct") <= 70), "Moderada (40–70%)")
+        .otherwise("Húmeda (> 70%)")
     )
     
     print("Esquema final listo para análisis:")
@@ -62,22 +95,11 @@ def preparar(ruta_archivo):
     return df_final
 
 if __name__ == "__main__":
-    #Configuración de argumentos por línea de comandos
     parser = argparse.ArgumentParser(description="Preparación de datos con PySpark para Solemne 2")
     parser.add_argument(
         "--entrada", 
         type=str, 
-        default="data/eventos_prueba.jsonl", 
-        help="Ruta del archivo JSONL a procesar"
-    )
-    args = parser.parse_args()
-    
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Preparación de datos con PySpark para Solemne 2")
-    parser.add_argument(
-        "--entrada", 
-        type=str, 
-        default="data/eventos_prueba.jsonl", 
+        default="data/eventos.jsonl", 
         help="Ruta del archivo JSONL a procesar"
     )
     args = parser.parse_args()
@@ -86,3 +108,6 @@ if __name__ == "__main__":
     df_listo = preparar(args.entrada)
     print("\n--- Muestra de 5 registros limpios y enriquecidos ---")
     df_listo.show(5, truncate=False)
+
+    # Cierra la sesión de Spark de forma ordenada (evita avisos de procesos Java en Windows)
+    df_listo.sparkSession.stop()

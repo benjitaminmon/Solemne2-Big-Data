@@ -2,80 +2,55 @@ import argparse
 import os
 import sys
 import matplotlib.pyplot as plt
+import numpy as np
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql.types import DoubleType
 
 # Asegurar importación desde src/ sin importar desde dónde se ejecute el comando
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-
-def preparar_respaldo(spark: SparkSession, ruta_entrada: str):
-    """Función de respaldo con las reglas de contrato_evento.md por si preparacion.py aún no está listo."""
-    df = spark.read.json(ruta_entrada)
-    df = (
-        df.withColumn("co_ppm", F.col("co_ppm").cast(DoubleType()))
-        .withColumn("temperatura_c", F.col("temperatura_c").cast(DoubleType()))
-        .withColumn("humedad_pct", F.col("humedad_pct").cast(DoubleType()))
-        .withColumn("velocidad_viento_ms", F.col("velocidad_viento_ms").cast(DoubleType()))
-        .withColumn("timestamp", F.to_timestamp("timestamp"))
-        .filter(F.col("co_ppm").isNotNull())
-    )
-    return df
-
-
-def obtener_datos_preparados(spark: SparkSession, ruta_entrada: str):
-    """Reutiliza preparacion.preparar() si existe; de lo contrario usa el respaldo."""
-    try:
-        import preparacion
-        if hasattr(preparacion, "preparar"):
-            try:
-                return preparacion.preparar(ruta_entrada, spark)
-            except TypeError:
-                return preparacion.preparar(ruta_entrada)
-    except Exception:
-        pass
-    return preparar_respaldo(spark, ruta_entrada)
-
-
-def asegurar_columnas_derivadas(df):
-    """Garantiza que existan rango_temp, rango_humedad y hora según docs/contrato_evento.md."""
-    if "rango_temp" not in df.columns:
-        df = df.withColumn(
-            "rango_temp",
-            F.when(F.col("temperatura_c") < 10, "Frío (< 10 °C)")
-            .when((F.col("temperatura_c") >= 10) & (F.col("temperatura_c") <= 20), "Templado (10–20 °C)")
-            .otherwise("Cálido (> 20 °C)"),
-        )
-    if "rango_humedad" not in df.columns:
-        df = df.withColumn(
-            "rango_humedad",
-            F.when(F.col("humedad_pct") < 40, "Seca (< 40%)")
-            .when((F.col("humedad_pct") >= 40) & (F.col("humedad_pct") <= 70), "Moderada (40–70%)")
-            .otherwise("Húmeda (> 70%)"),
-        )
-    if "hora" not in df.columns:
-        df = df.withColumn("hora", F.hour(F.to_timestamp("timestamp")))
-    return df
+# La preparación (carga, tipos, limpieza de nulos y rangos) vive SOLO en preparacion.py
+from preparacion import preparar  # noqa: E402
 
 
 def main():
     parser = argparse.ArgumentParser(description="Análisis exploratorio con PySpark - Estación Las Condes")
     parser.add_argument("--entrada", required=True, help="Ruta al archivo JSONL de entrada")
+    parser.add_argument(
+        "--graficos",
+        default=None,
+        help="Carpeta de salida de los gráficos. Por defecto: outputs/graficos, "
+             "o outputs/graficos/demo si el archivo de entrada es la muestra de demostración.",
+    )
     args = parser.parse_args()
 
-    os.makedirs("outputs/graficos", exist_ok=True)
+    # Los gráficos de la muestra de demo se guardan aparte para no sobrescribir los oficiales
+    if args.graficos:
+        carpeta_graficos = args.graficos
+    elif "demo" in os.path.basename(args.entrada).lower():
+        carpeta_graficos = os.path.join("outputs", "graficos", "demo")
+    else:
+        carpeta_graficos = os.path.join("outputs", "graficos")
+    os.makedirs(carpeta_graficos, exist_ok=True)
+    print(f"[*] Los gráficos se guardarán en: {carpeta_graficos}")
 
     spark = (
         SparkSession.builder
         .appName("AnalisisEstacionLasCondes")
         .master("local[*]")
+        # Evita fallos en PCs cuyo nombre tiene caracteres no válidos para Spark (tildes, ñ)
+        .config("spark.driver.host", "localhost")
+        .config("spark.driver.bindAddress", "127.0.0.1")
         .getOrCreate()
     )
     spark.sparkContext.setLogLevel("ERROR")
 
-    df = obtener_datos_preparados(spark, args.entrada)
-    df = asegurar_columnas_derivadas(df)
+    # 1. Preparación de datos (preparacion.py): esquema, tipos, nulos y rangos
+    df = preparar(args.entrada)
+    spark.sparkContext.setLogLevel("ERROR")  # preparar() deja WARN; se vuelve a ERROR para una salida limpia
+
+    # 2. Variable derivada propia del análisis temporal (P3)
+    df = df.withColumn("hora", F.hour("timestamp"))
     df.cache()
 
     print("\n" + "=" * 70)
@@ -122,7 +97,7 @@ def main():
     plt.legend()
     plt.grid(axis="y", linestyle="--", alpha=0.4)
     plt.tight_layout()
-    plt.savefig("outputs/graficos/pregunta1.png", dpi=200)
+    plt.savefig(os.path.join(carpeta_graficos, "pregunta1.png"), dpi=200)
     plt.close()
 
     # -------------------------------------------------------------------------
@@ -158,8 +133,11 @@ def main():
 
     # Gráfico 2: Mapa de calor (Heatmap) con promedio y conteo por celda
     plt.figure(figsize=(8, 5))
-    matriz = pivot_avg.fillna(0).values
-    im = plt.imshow(matriz, cmap="YlOrRd", aspect="auto")
+    # Celdas sin datos quedan enmascaradas y se pintan en gris (no como CO bajo)
+    matriz = np.ma.masked_invalid(pivot_avg.values.astype(float))
+    cmap = plt.get_cmap("YlOrRd").copy()
+    cmap.set_bad("#d9d9d9")
+    im = plt.imshow(matriz, cmap=cmap, aspect="auto")
     plt.colorbar(im, label="CO Promedio (ppm)")
 
     plt.xticks(range(len(orden_hum)), orden_hum)
@@ -179,7 +157,7 @@ def main():
     plt.xlabel("Categoría de Humedad Relativa")
     plt.ylabel("Categoría de Temperatura")
     plt.tight_layout()
-    plt.savefig("outputs/graficos/pregunta2.png", dpi=200)
+    plt.savefig(os.path.join(carpeta_graficos, "pregunta2.png"), dpi=200)
     plt.close()
 
     # -------------------------------------------------------------------------
@@ -199,12 +177,22 @@ def main():
     hora_pd = tabla_hora.toPandas()
     hora_max = hora_pd.loc[hora_pd["co_promedio_ppm"].idxmax()]
     hora_min = hora_pd.loc[hora_pd["co_promedio_ppm"].idxmin()]
+    noche = hora_pd[hora_pd["hora"].between(19, 22)]
+
+    texto_noche = ""
+    if not noche.empty:
+        pico_noche = noche.loc[noche["co_promedio_ppm"].idxmax()]
+        texto_noche = (
+            f" En la hora punta nocturna (19–22 h) el pico se da a las "
+            f"{int(pico_noche['hora']):02d}:00 hrs con {pico_noche['co_promedio_ppm']:.3f} ppm."
+        )
 
     print(
-        f"Respuesta P3 -> El CO presenta un comportamiento bimodal ligado al tráfico y la temperatura: "
-        f"alcanza su máximo absoluto en la hora punta de la mañana ({int(hora_max['hora']):02d}:00 hrs con {hora_max['co_promedio_ppm']:.3f} ppm, "
-        f"potenciado por el frío matinal) y un segundo pico en la hora punta nocturna (22:00 hrs con 0.830 ppm), "
-        f"mientras que cae a su mínimo en la tarde ({int(hora_min['hora']):02d}:00 hrs con {hora_min['co_promedio_ppm']:.3f} ppm) por mayor temperatura y ventilación."
+        f"Respuesta P3 -> El CO promedio alcanza su máximo a las {int(hora_max['hora']):02d}:00 hrs "
+        f"({hora_max['co_promedio_ppm']:.3f} ppm) y su mínimo a las {int(hora_min['hora']):02d}:00 hrs "
+        f"({hora_min['co_promedio_ppm']:.3f} ppm).{texto_noche} "
+        f"Los valores más altos coinciden con las horas punta de tráfico y las horas más frías; "
+        f"los más bajos, con la tarde, de mayor temperatura y ventilación."
     )
 
     # Gráfico 3: Serie temporal horaria
@@ -220,7 +208,7 @@ def main():
     plt.legend(loc="upper left", fontsize=8.5)
     plt.grid(True, linestyle="--", alpha=0.4)
     plt.tight_layout()
-    plt.savefig("outputs/graficos/pregunta3.png", dpi=200)
+    plt.savefig(os.path.join(carpeta_graficos, "pregunta3.png"), dpi=200)
     plt.close()
 
     # -------------------------------------------------------------------------

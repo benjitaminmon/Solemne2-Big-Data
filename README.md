@@ -1,73 +1,106 @@
-<!--
-Pendiente: completar versiones de Python, Java y Docker usadas y probar los comandos.
--->
-
 # Solemne 2 Big Data — Generación, ingesta y análisis de eventos con Python, Kafka y Spark
 
 ## Dependencias y versiones
-- Python:
-- Java (requerido por PySpark; versiones 8, 11 o 17):
-- Docker Desktop (para levantar Kafka):
+
+- Python 3.12 (PySpark y pandas aún no son compatibles con Python 3.15)
+- Java 17 o 21 (requerido por PySpark 4.x)
+- Docker Desktop con `docker compose` (para levantar Kafka 3.9.1)
 - Librerías Python (`requirements.txt`):
-  - `pyspark>=3.5.0`
+  - `pyspark>=3.5.0` (se instala la 4.x)
   - `pandas<3`
   - `matplotlib`
   - `kafka-python>=2.0.3`
 
 ## Configuración de conexión y tópico
+
 - Servidor Kafka (bootstrap servers): `localhost:9092`
-- Tópico: `estacion-lascondes`
+- Tópico principal: `estacion-lascondes` (conjunto completo, 5.000 eventos)
+- Tópico de demostración: `estacion-lascondes-demo` (muestra de 150 eventos)
 
-## Flujo de ejecución en Windows
-1. Crear y activar el entorno virtual e instalar dependencias (Windows PowerShell):
-   ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1
-   pip install -r requirements.txt
-   ```
+## Orden y comandos de ejecución (Windows PowerShell, desde la carpeta del proyecto)
 
-2. Levantar Kafka:
-   ```powershell
-   docker compose -f .\kafka\docker_compose.yml up -d
-   ```
-3. Crear el tópico del proyecto:
-   ```powershell
-   docker exec kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic estacion-lascondes --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
-   ```
-4. Generar y publicar 5.000 eventos:
-   ```powershell
-   python src\productor.py --cantidad 5000
-   ```
-   Si solo necesitas generar un archivo local, sin Kafka, usa en su lugar:
-   ```powershell
-   python src\productor.py --cantidad 5000 --solo-archivo data\eventos.jsonl
-   ```
-   Este modo escribe directamente el JSONL en `data\eventos.jsonl`; no requiere
-   levantar Kafka ni crear el tópico. Luego puedes continuar con el paso 6.
-5. Exportar los mensajes del tópico a JSON Lines:
-   ```powershell
-   cmd /c "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic estacion-lascondes --from-beginning --max-messages 5000 > data\eventos.jsonl"
-   ```
-6. Preparar y analizar los datos:
-   ```powershell
-   python src\preparacion.py --entrada data\eventos.jsonl
-   python src\analisis.py --entrada data\eventos.jsonl
-   ```
+### 1. Entorno virtual (una sola vez)
 
-Para generar una muestra de demo sin mezclarla con el tópico completo:
 ```powershell
-docker exec kafka /opt/kafka/bin/kafka-topics.sh --create --if-not-exists --topic estacion-lascondes-demo --bootstrap-server localhost:9092 --partitions 1 --replication-factor 1
-python src\productor.py --cantidad 150 --topico estacion-lascondes-demo
-cmd /c "docker exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic estacion-lascondes-demo --from-beginning --max-messages 150 > data\eventos_demo.jsonl"
+py -3.12 -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install -r requirements.txt
 ```
 
-`src\consumidor.py` y `kafka\crear_topico.sh` aún no implementan esos pasos; los comandos anteriores usan las herramientas incluidas en la imagen de Kafka. El exportador lee desde el inicio del tópico, por lo que, si se ejecutó el productor varias veces en el mismo tópico, puede ser necesario crear un tópico nuevo para exportar solo una ejecución.
+Cada terminal nueva debe activar el entorno con `.\venv\Scripts\Activate.ps1` (la línea debe empezar con `(venv)`).
+Si PowerShell bloquea la activación: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
 
-Al publicar, Kafka guarda los mensajes en el registro del tópico dentro del contenedor; eso no crea automáticamente un archivo JSONL en la carpeta `data`. El comando del paso 5 lee esos mensajes y redirige su salida a `data\eventos.jsonl`.
+### 2. Levantar Kafka y preparar los tópicos
 
-El Compose actual no monta un volumen persistente. Los mensajes permanecen en el contenedor mientras este exista, sujetos a la política de retención de Kafka, pero se pierden al eliminarlo. Exporta los datos antes de ejecutar `docker compose -f .\kafka\docker_compose.yml down`.
+Con Docker Desktop abierto:
+
+```powershell
+docker compose -f .\kafka\docker_compose.yml up -d
+docker ps
+.\kafka\crear_topico.bat --reset
+```
+
+`--reset` borra y vuelve a crear ambos tópicos vacíos, para que no se acumulen eventos de ejecuciones anteriores. En Linux/Mac: `bash kafka/crear_topico.sh --reset`.
+
+### 3. Generar el conjunto completo (5.000 eventos)
+
+Terminal 1 — iniciar primero el consumidor (queda esperando eventos):
+
+```powershell
+python src\consumidor.py --salida data\eventos.jsonl --timeout 20
+```
+
+Terminal 2 — ejecutar el productor:
+
+```powershell
+python src\productor.py --cantidad 5000 --semilla 42
+```
+
+El consumidor guarda cada evento como una línea JSON y se detiene solo tras 8 segundos sin mensajes nuevos (o con Ctrl+C), mostrando el resumen de eventos guardados y errores.
+
+### 4. Preparación y análisis con PySpark
+
+```powershell
+python src\preparacion.py --entrada data\eventos.jsonl
+python src\analisis.py --entrada data\eventos.jsonl
+```
+
+`analisis.py` ejecuta la preparación, responde las tres preguntas y guarda los gráficos en `outputs\graficos\`.
+
+### 5. Muestra para la demostración (150 eventos, separada del conjunto completo)
+
+Terminal 1:
+
+```powershell
+python src\consumidor.py --topico estacion-lascondes-demo --salida data\eventos_demo.jsonl
+```
+
+Terminal 2:
+
+```powershell
+python src\productor.py --cantidad 150 --topico estacion-lascondes-demo
+```
+
+Luego:
+
+```powershell
+python src\preparacion.py --entrada data\eventos_demo.jsonl
+python src\analisis.py --entrada data\eventos_demo.jsonl
+```
+
+Los gráficos de la muestra se guardan en `outputs\graficos\demo\`, sin sobrescribir los del conjunto completo.
+
+### 6. Detener Kafka
+
+```powershell
+docker compose -f .\kafka\docker_compose.yml down
+```
+
+Esto elimina el contenedor y los mensajes del tópico; los archivos de `data\` no se ven afectados.
 
 ## Ubicación de los datos
-- Archivo completo (5.000+ eventos): `data/eventos.jsonl`
-- Muestra de la demo: `data/eventos_demo.jsonl`
-- Gráficos: `outputs/graficos/`
+
+- Conjunto completo (5.000 eventos): `data/eventos.jsonl`
+- Muestra de la demostración: `data/eventos_demo.jsonl`
+- Gráficos del conjunto completo: `outputs/graficos/`
+- Gráficos de la muestra de demostración: `outputs/graficos/demo/`
