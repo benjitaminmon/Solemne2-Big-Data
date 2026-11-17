@@ -47,7 +47,7 @@ docker ps
 Terminal 1 — iniciar primero el consumidor (queda esperando eventos):
 
 ```powershell
-python src\consumidor.py --salida data\eventos.jsonl --timeout 20
+python src\consumidor.py --salida data\eventos.jsonl --timeout 15
 ```
 
 Terminal 2 — ejecutar el productor:
@@ -72,7 +72,7 @@ python src\analisis.py --entrada data\eventos.jsonl
 Terminal 1:
 
 ```powershell
-python src\consumidor.py --topico estacion-lascondes-demo --salida data\eventos_demo.jsonl
+python src\consumidor.py --topico estacion-lascondes-demo --salida data\eventos_demo.jsonl --timeout 15
 ```
 
 Terminal 2:
